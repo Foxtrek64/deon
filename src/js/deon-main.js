@@ -192,6 +192,93 @@ function untrackUser () {
   analytics.reset()
 }
 
+function showFront (e, el) {
+  var front = document.getElementById('front-form');
+
+  var scope = {};
+  var meta = [{
+    name: 'currentPage',
+    value: window.location.toString()
+  }, {
+    name: 'browser',
+    value: bowser.name + ' ' + bowser.version
+  }];
+
+  if(isSignedIn()) {
+    scope.email = session.user.email;
+    meta.push({
+      name: 'uid',
+      value: session.user._id
+    });
+    meta.push({
+      name: 'gold',
+      value: hasGoldAccess() ? 'Yes' : 'No'
+    });
+    scope.name = session.user.realName || session.user.name;
+  }
+
+  scope.meta = meta;
+  showFront.scope = scope;
+  renderFrontForm();
+  front.classList.toggle('show', true);
+}
+
+function renderFrontForm () {
+  var front = document.getElementById('front-form');
+  render(front, getTemplateEl('front-form').textContent, showFront.scope);
+}
+
+function closeFrontForm (e) {
+  if(e) {
+    e.preventDefault();
+  }
+  document.getElementById('front-form').classList.toggle('show', false);
+}
+
+function submitFrontForm (e, el) {
+  var front = document.getElementById('front-form');
+  var button = document.querySelector('#front-form button[type=submit]');
+
+  e.preventDefault();
+  var form = e.target;
+  var formData = getDataSet(e.target);
+  var url = form.getAttribute('action');
+
+  var errors = [];
+
+  if(!formData.email) {
+    errors.push('Email is required');
+  }
+
+  if(!formData.body) {
+    errors.push('Message is required');
+  }
+
+  if(errors.length > 0) {
+    showFront.scope.errors = errors;
+    renderFrontForm();
+    return;
+  }
+
+  button.disabled = true;
+  button.innerHTML = 'Sending...';
+  requestJSON({
+    url: endpoint + '/support/send',
+    data: formData,
+    method: 'POST'
+  }, function (err, resp, xhr) {
+    button.disabled = false;
+    button.innerHTML = 'Submit';
+    if(err) {
+      showFront.scope.errors = [err.toString()];
+      renderFrontForm();
+      return;
+    }
+    toasty('Message sent!')
+    closeFrontForm();
+  })
+}
+
 function showIntercom (e, el) {
   if (!window.Intercom)
     return toasty(Error('Intercom disabled by Ad-Block. Please unblock.'))
@@ -405,25 +492,27 @@ function openPurchaseRelease (e, el) {
 
 function removeYouTubeClaim (e, el) {
   var data = getTargetDataSet(el)
+  var videoIdInput = document.querySelector('input[name="videoId"]');
   if (!data || !data.videoId) return
 
   var videoId = data.videoId
   if (videoId.indexOf('youtu')>-1){
     videoId = youTubeIdParser(videoId)
     if (!videoId) return toasty(Error('Please make sure to enter a YouTube ID or a valid YouTube URL.'))
+    videoIdInput.value = videoId;
   }
 
   requestJSON({
     url: endpoint + '/self/remove-claims',
     method: 'POST',
     data: {
-      videoId: data.videoId
+      videoId: videoId
     },
     withCredentials: true
   }, function (err, obj, xhr) {
     if (err) return window.alert(err.message)
     toasty(strings.claimReleased)
-    document.querySelector('input[name="videoId"]').value = ""
+    videoIdInput.value = ""
   })
 }
 
@@ -838,6 +927,7 @@ function transformWhitelists (obj) {
       whitelist.resume = { _id: whitelist._id, amount: whitelist.monthlyCost }
     if (whitelist.subscriptionActive)
       whitelist.cancel = { _id: whitelist._id }
+    whitelist.vendorName = getVendorName(whitelist.vendor);
     return whitelist
   })
   return obj
@@ -1071,13 +1161,16 @@ function accessDownloadOrModal (e, el) {
     }
   }
   else {
-    return accessGoldOrModal(e, el)
+    return canDownloadOrModal(e, el)
   }
 }
 
-function accessGoldOrModal (e, el) {
-  var hasit = hasGoldAccess()
-  if (hasit) return
+function canDownload () {
+  return hasGoldAccess() || (session.user && session.user.type && session.user.type.indexOf('artist') > -1);
+}
+
+function canDownloadOrModal (e, el) {
+  if(canDownload()) return true
   e.preventDefault()
   openModal('subscription-required-modal', {
     signedIn: isSignedIn()
@@ -1107,8 +1200,6 @@ function renderHeader () {
   render(el, template, {
     data: data
   })
-  var feedbackBtn = document.querySelector('[role="feedback"]')
-  if (feedbackBtn) feedbackBtn.classList.toggle('hide', !isSignedIn())
 }
 
 function renderHeaderMobile () {
